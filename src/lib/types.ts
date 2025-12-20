@@ -5,6 +5,7 @@ export interface CommitInfo {
   author: string;
   email: string;
   date: number;
+  parent_ids: string[];
 }
 
 export interface CommitPage {

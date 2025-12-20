@@ -45,6 +45,7 @@ pub struct CommitInfo {
     pub author: String,
     pub email: String,
     pub date: i64,
+    pub parent_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +73,10 @@ fn get_commits(repo_path: String, offset: usize, limit: usize) -> Result<CommitP
         .filter_map(|oid| {
             let commit = repo.find_commit(oid).ok()?;
             let author = commit.author();
+            let parent_ids: Vec<String> = (0..commit.parent_count())
+                .filter_map(|i| commit.parent_id(i).ok())
+                .map(|id| id.to_string())
+                .collect();
             Some(CommitInfo {
                 hash: oid.to_string(),
                 short_hash: oid.to_string()[..7].to_string(),
@@ -79,6 +84,7 @@ fn get_commits(repo_path: String, offset: usize, limit: usize) -> Result<CommitP
                 author: author.name().unwrap_or("Unknown").to_string(),
                 email: author.email().unwrap_or("").to_string(),
                 date: commit.time().seconds(),
+                parent_ids,
             })
         })
         .collect();
@@ -120,6 +126,10 @@ fn search_commits(repo_path: String, query: String, offset: usize, limit: usize)
                 || email.to_lowercase().contains(&query_lower);
 
             if matches {
+                let parent_ids: Vec<String> = (0..commit.parent_count())
+                    .filter_map(|i| commit.parent_id(i).ok())
+                    .map(|id| id.to_string())
+                    .collect();
                 Some(CommitInfo {
                     hash: hash_str,
                     short_hash: oid.to_string()[..7].to_string(),
@@ -127,6 +137,7 @@ fn search_commits(repo_path: String, query: String, offset: usize, limit: usize)
                     author: author_name,
                     email,
                     date: commit.time().seconds(),
+                    parent_ids,
                 })
             } else {
                 None

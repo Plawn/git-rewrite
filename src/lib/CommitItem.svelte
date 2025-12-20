@@ -11,6 +11,9 @@
 
   let { commit, selected, onSelect, onEdit, onViewDiff }: Props = $props();
 
+  // Determine if this is a merge commit
+  let isMerge = $derived(commit.parent_ids.length > 1);
+
   function formatDate(timestamp: number): string {
     const date = new Date(timestamp * 1000);
     return date.toLocaleDateString('en-US', {
@@ -45,6 +48,17 @@
   <div class="commit-info">
     <div class="commit-header">
       <span class="hash">{commit.short_hash}</span>
+      {#if isMerge}
+        <span class="merge-badge" title="Merge commit ({commit.parent_ids.length} parents)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="18" cy="5" r="3"/>
+            <circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <path d="M18 8v2a4 4 0 0 1-4 4H9"/>
+            <path d="M18 16v-2a4 4 0 0 0-4-4"/>
+          </svg>
+        </span>
+      {/if}
       <span class="message" title={commit.message}>{getFirstLine(commit.message)}</span>
     </div>
     <div class="commit-meta">
@@ -168,6 +182,21 @@
 
   .commit-header :global(.hash) {
     flex-shrink: 0;
+  }
+
+  .merge-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 6px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(99, 102, 241, 0.15) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: var(--radius-xs);
+    color: #a78bfa;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   .message {
