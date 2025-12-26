@@ -194,9 +194,9 @@
 </script>
 
 <main>
-  <header>
-    <div class="header-left">
-      <h1>Git Rewrite</h1>
+  <header data-tauri-drag-region>
+    <div class="header-left" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>Git Rewrite</h1>
       {#if repoInfo}
         <div class="repo-badge">
           <span class="repo-name">{repoInfo.name}</span>
@@ -372,6 +372,15 @@
     background: transparent;
   }
 
+  /* Light mode: add subtle background for readability with vibrancy */
+  :global([data-theme="light"]) main {
+    background: rgba(255, 255, 255, 0.7);
+  }
+
+  :global([data-theme="light"]) header {
+    background: rgba(255, 255, 255, 0.8) !important;
+  }
+
   header {
     display: flex;
     flex-wrap: wrap;
@@ -379,6 +388,7 @@
     align-items: center;
     gap: 12px;
     padding: 14px 24px;
+    padding-left: 80px; /* Space for macOS traffic lights */
     background: var(--glass-bg);
     backdrop-filter: blur(var(--blur-xl));
     -webkit-backdrop-filter: blur(var(--blur-xl));
@@ -576,9 +586,9 @@
   .diff-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(var(--blur-lg));
-    -webkit-backdrop-filter: blur(var(--blur-lg));
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -592,15 +602,15 @@
   }
 
   .diff-modal {
-    background: var(--modal-bg);
-    backdrop-filter: blur(var(--blur-xl));
-    -webkit-backdrop-filter: blur(var(--blur-xl));
-    border: 1px solid var(--glass-border-light);
+    background: rgba(30, 30, 45, 0.85);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-xl);
     box-shadow:
-      var(--shadow-lg),
-      var(--shadow-glow),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      0 25px 50px -12px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+      0 1px 0 rgba(255, 255, 255, 0.1) inset;
     width: 90%;
     max-width: 1000px;
     height: 85vh;
@@ -608,6 +618,19 @@
     flex-direction: column;
     animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
+  }
+
+  /* Light mode diff modal */
+  :global([data-theme="light"]) .diff-modal {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow:
+      0 25px 50px -12px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(0, 0, 0, 0.05) inset;
+  }
+
+  :global([data-theme="light"]) .diff-modal-backdrop {
+    background: rgba(255, 255, 255, 0.3);
   }
 
   @keyframes slideIn {
@@ -626,9 +649,14 @@
     justify-content: space-between;
     align-items: center;
     padding: 18px 24px;
-    border-bottom: 1px solid var(--glass-border);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     flex-shrink: 0;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  :global([data-theme="light"]) .diff-modal-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(0, 0, 0, 0.02);
   }
 
   .diff-modal-title {
@@ -650,6 +678,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 24px;
+    background: transparent;
   }
 
   .diff-loading {
@@ -663,8 +692,8 @@
   }
 
   .close-btn {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     cursor: pointer;
     color: var(--muted-color);
     padding: 8px;
@@ -676,9 +705,19 @@
   }
 
   .close-btn:hover {
-    background: var(--glass-bg-hover);
+    background: rgba(255, 255, 255, 0.15);
     color: var(--text-color);
-    border-color: var(--glass-border-light);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  :global([data-theme="light"]) .close-btn {
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  :global([data-theme="light"]) .close-btn:hover {
+    background: rgba(0, 0, 0, 0.1);
+    border-color: rgba(0, 0, 0, 0.15);
   }
 
   /* ============================================

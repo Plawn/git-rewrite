@@ -14,9 +14,12 @@
       {
         "title": "Git Rewrite",
         "width": 1000,
-        "height": 700
+        "height": 700,
+        "transparent": true,
+        "titleBarStyle": "Overlay"
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

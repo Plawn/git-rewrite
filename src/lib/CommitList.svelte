@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import CommitItem from './CommitItem.svelte';
+  import GitGraphLine from './GitGraphLine.svelte';
+  import { calculateGraphLayout } from './graphUtils';
   import type { CommitInfo, CommitPage } from './types';
 
   interface Props {
@@ -23,6 +25,10 @@
   let currentRepoPath = $state('');
 
   const PAGE_SIZE = 50;
+  const ROW_HEIGHT = 52;
+
+  // Calculate graph layout whenever commits change
+  let graphLayout = $derived(calculateGraphLayout(commits));
 
   async function loadCommits(reset = false, query = '') {
     console.log('[loadCommits]', { reset, query, loading, hasMore, currentRepoPath, commitsLen: commits.length });
@@ -198,13 +204,24 @@
     onscroll={handleScroll}
   >
     {#each commits as commit (commit.hash)}
-      <CommitItem
-        {commit}
-        selected={selectedCommits.has(commit.hash)}
-        onSelect={handleSelect}
-        onEdit={onEditCommit}
-        {onViewDiff}
-      />
+      {@const graphNode = graphLayout.nodes.get(commit.hash)}
+      <div class="commit-row">
+        {#if graphNode}
+          <GitGraphLine
+            node={graphNode}
+            maxRails={graphLayout.maxRails}
+            rowHeight={ROW_HEIGHT}
+            isSelected={selectedCommits.has(commit.hash)}
+          />
+        {/if}
+        <CommitItem
+          {commit}
+          selected={selectedCommits.has(commit.hash)}
+          onSelect={handleSelect}
+          onEdit={onEditCommit}
+          {onViewDiff}
+        />
+      </div>
     {/each}
 
     {#if loading}
@@ -290,17 +307,22 @@
 
   .search-input {
     flex: 1;
-    border: none;
-    background: transparent;
-    padding: 10px 0;
+    border: none !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 10px 0 !important;
     font-size: 14px;
     color: var(--text-color);
     width: 100%;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
 
   .search-input:focus {
     outline: none;
-    box-shadow: none;
+    box-shadow: none !important;
+    border: none !important;
   }
 
   .search-input::placeholder {
@@ -360,9 +382,23 @@
   .commit-list {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
     padding: 8px;
+    width: 100%;
+  }
+
+  .commit-row {
+    display: flex;
+    align-items: center;
+    min-height: 52px;
+    width: 100%;
+  }
+
+  .commit-row :global(.commit-item) {
+    flex: 1;
+    min-width: 0;
   }
 
   .commit-list::-webkit-scrollbar {

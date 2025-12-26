@@ -1,6 +1,10 @@
 use git2::{Oid, Repository, Sort, StatusOptions, ResetType, BranchType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::Manager;
+
+#[cfg(target_os = "macos")]
+use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 
 fn check_working_directory_clean(repo: &Repository) -> Result<(), String> {
     let mut opts = StatusOptions::new();
@@ -742,6 +746,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let window = app.get_webview_window("main").unwrap();
+
+            #[cfg(target_os = "macos")]
+            apply_vibrancy(&window, NSVisualEffectMaterial::UnderWindowBackground, None, None)
+                .expect("Failed to apply vibrancy");
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_commits,
             search_commits,
