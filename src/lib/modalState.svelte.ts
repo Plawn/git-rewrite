@@ -32,11 +32,6 @@ export function createModalState<T = undefined>() {
     close() {
       isOpen = false;
       data = null;
-    },
-
-    /** Update data without changing open state */
-    setData(value: T | null) {
-      data = value;
     }
   };
 }

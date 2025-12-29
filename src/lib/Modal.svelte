@@ -31,7 +31,6 @@
     class="modal-backdrop"
     role="presentation"
     onclick={handleBackdropClick}
-    onkeydown={(e) => e.key === 'Escape' && onClose()}
   >
     <div
       class="modal"

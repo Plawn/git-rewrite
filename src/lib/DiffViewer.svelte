@@ -11,7 +11,6 @@
   let expandedFiles = $state<Set<string>>(new Set());
   let searchQuery = $state('');
   let currentMatchIndex = $state(0);
-  let matchElements: HTMLElement[] = [];
 
   // Find all matches across all files
   let matches = $derived.by(() => {
