@@ -59,38 +59,47 @@ pub struct CommitPage {
     pub total_count: usize,
 }
 
+/// Convert an Oid to CommitInfo, reusing the hash string to avoid redundant allocations
+fn oid_to_commit_info(repo: &Repository, oid: Oid) -> Option<CommitInfo> {
+    let commit = repo.find_commit(oid).ok()?;
+    let author = commit.author();
+    let hash = oid.to_string();
+    let short_hash = hash[..7].to_string();
+    let parent_ids: Vec<String> = (0..commit.parent_count())
+        .filter_map(|i| commit.parent_id(i).ok())
+        .map(|id| id.to_string())
+        .collect();
+
+    Some(CommitInfo {
+        hash,
+        short_hash,
+        message: commit.message().unwrap_or("").to_string(),
+        author: author.name().unwrap_or("Unknown").to_string(),
+        email: author.email().unwrap_or("").to_string(),
+        date: commit.time().seconds(),
+        parent_ids,
+    })
+}
+
 #[tauri::command]
 fn get_commits(repo_path: String, offset: usize, limit: usize) -> Result<CommitPage, String> {
     let repo = Repository::open(&repo_path).map_err(|e| format!("Failed to open repo: {}", e))?;
 
+    // Count total commits (fast iteration without loading commit objects)
+    let mut count_walk = repo.revwalk().map_err(|e| format!("Failed to create revwalk: {}", e))?;
+    count_walk.push_head().map_err(|e| format!("Failed to push HEAD: {}", e))?;
+    let total_count = count_walk.filter(|r| r.is_ok()).count();
+
+    // Fetch only the commits we need for this page
     let mut revwalk = repo.revwalk().map_err(|e| format!("Failed to create revwalk: {}", e))?;
     revwalk.set_sorting(Sort::TIME).map_err(|e| format!("Failed to set sorting: {}", e))?;
     revwalk.push_head().map_err(|e| format!("Failed to push HEAD: {}", e))?;
 
-    let all_oids: Vec<Oid> = revwalk.filter_map(|r| r.ok()).collect();
-    let total_count = all_oids.len();
-
-    let commits: Vec<CommitInfo> = all_oids
-        .into_iter()
+    let commits: Vec<CommitInfo> = revwalk
+        .filter_map(|r| r.ok())
         .skip(offset)
         .take(limit)
-        .filter_map(|oid| {
-            let commit = repo.find_commit(oid).ok()?;
-            let author = commit.author();
-            let parent_ids: Vec<String> = (0..commit.parent_count())
-                .filter_map(|i| commit.parent_id(i).ok())
-                .map(|id| id.to_string())
-                .collect();
-            Some(CommitInfo {
-                hash: oid.to_string(),
-                short_hash: oid.to_string()[..7].to_string(),
-                message: commit.message().unwrap_or("").to_string(),
-                author: author.name().unwrap_or("Unknown").to_string(),
-                email: author.email().unwrap_or("").to_string(),
-                date: commit.time().seconds(),
-                parent_ids,
-            })
-        })
+        .filter_map(|oid| oid_to_commit_info(&repo, oid))
         .collect();
 
     let has_more = offset + commits.len() < total_count;
@@ -112,49 +121,22 @@ fn search_commits(repo_path: String, query: String, offset: usize, limit: usize)
 
     let query_lower = query.to_lowercase();
 
-    // Filter commits matching the query
-    let matching_commits: Vec<CommitInfo> = revwalk
-        .filter_map(|r| r.ok())
-        .filter_map(|oid| {
-            let commit = repo.find_commit(oid).ok()?;
-            let author = commit.author();
-            let hash_str = oid.to_string();
-            let message = commit.message().unwrap_or("").to_string();
-            let author_name = author.name().unwrap_or("Unknown").to_string();
-            let email = author.email().unwrap_or("").to_string();
+    // Stream through commits, only collecting what we need for this page
+    let mut total_count = 0usize;
+    let mut commits = Vec::with_capacity(limit);
+    let mut skipped = 0usize;
 
-            // Match against hash, message, or author
-            let matches = hash_str.to_lowercase().starts_with(&query_lower)
-                || message.to_lowercase().contains(&query_lower)
-                || author_name.to_lowercase().contains(&query_lower)
-                || email.to_lowercase().contains(&query_lower);
-
-            if matches {
-                let parent_ids: Vec<String> = (0..commit.parent_count())
-                    .filter_map(|i| commit.parent_id(i).ok())
-                    .map(|id| id.to_string())
-                    .collect();
-                Some(CommitInfo {
-                    hash: hash_str,
-                    short_hash: oid.to_string()[..7].to_string(),
-                    message,
-                    author: author_name,
-                    email,
-                    date: commit.time().seconds(),
-                    parent_ids,
-                })
-            } else {
-                None
+    for oid in revwalk.filter_map(|r| r.ok()) {
+        if let Some(commit_info) = match_commit(&repo, oid, &query_lower) {
+            total_count += 1;
+            if skipped < offset {
+                skipped += 1;
+            } else if commits.len() < limit {
+                commits.push(commit_info);
             }
-        })
-        .collect();
-
-    let total_count = matching_commits.len();
-    let commits: Vec<CommitInfo> = matching_commits
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+            // Continue iterating to get accurate total_count
+        }
+    }
 
     let has_more = offset + commits.len() < total_count;
 
@@ -163,6 +145,42 @@ fn search_commits(repo_path: String, query: String, offset: usize, limit: usize)
         has_more,
         total_count,
     })
+}
+
+/// Try to match a commit against a search query, returning CommitInfo if it matches
+fn match_commit(repo: &Repository, oid: Oid, query_lower: &str) -> Option<CommitInfo> {
+    let commit = repo.find_commit(oid).ok()?;
+    let author = commit.author();
+    let hash = oid.to_string();
+    let message = commit.message().unwrap_or("");
+    let author_name = author.name().unwrap_or("Unknown");
+    let email = author.email().unwrap_or("");
+
+    // Match against hash, message, or author
+    let matches = hash.to_lowercase().starts_with(query_lower)
+        || message.to_lowercase().contains(query_lower)
+        || author_name.to_lowercase().contains(query_lower)
+        || email.to_lowercase().contains(query_lower);
+
+    if matches {
+        let short_hash = hash[..7].to_string();
+        let parent_ids: Vec<String> = (0..commit.parent_count())
+            .filter_map(|i| commit.parent_id(i).ok())
+            .map(|id| id.to_string())
+            .collect();
+
+        Some(CommitInfo {
+            hash,
+            short_hash,
+            message: message.to_string(),
+            author: author_name.to_string(),
+            email: email.to_string(),
+            date: commit.time().seconds(),
+            parent_ids,
+        })
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -212,7 +230,7 @@ fn rewrite_commit_message(
     let base_parent_oid = if target_commit.parent_count() > 0 {
         target_commit.parent_id(0).map_err(|e| format!("Failed to get parent: {}", e))?
     } else {
-        return Err("Cannot rewrite the initial commit".to_string());
+        return Err("Cannot rewrite the initial commit. The first commit in a repository has no parent to rebase onto. To modify it, use 'git rebase -i --root' in the terminal.".to_string());
     };
 
     // Get current branch name
@@ -222,7 +240,10 @@ fn rewrite_commit_message(
 
     // Verify commit is in current branch
     if !repo.graph_descendant_of(head_oid, target_oid).unwrap_or(false) && head_oid != target_oid {
-        return Err("Commit not found in current branch history".to_string());
+        return Err(format!(
+            "Commit {} is not in the current branch '{}'. Switch to a branch that contains this commit, or verify you selected the correct commit.",
+            &commit_hash[..7], current_branch
+        ));
     }
 
     // Collect commits from HEAD to target
@@ -353,7 +374,7 @@ fn squash_commits_impl(
     let base_parent_oid = if oldest_commit.parent_count() > 0 {
         oldest_commit.parent_id(0).map_err(|e| format!("Failed to get parent: {}", e))?
     } else {
-        return Err("Cannot squash the initial commit".to_string());
+        return Err("Cannot squash commits that include the initial commit. The first commit in a repository has no parent to rebase onto. Deselect the initial commit and try again.".to_string());
     };
 
     // Get current branch info
@@ -374,7 +395,10 @@ fn squash_commits_impl(
     }
 
     if !all_commits.contains(&oldest_oid) {
-        return Err("Commits not found in current branch history".to_string());
+        return Err(format!(
+            "One or more selected commits are not in the current branch '{}'. Ensure all commits belong to this branch.",
+            current_branch
+        ));
     }
 
     // Reverse to go from oldest to newest
@@ -382,19 +406,20 @@ fn squash_commits_impl(
 
     // Rewrite commits
     let mut current_parent_oid = base_parent_oid;
-    let mut squash_tree: Option<git2::Tree> = None;
     let mut first_squash_author: Option<git2::Signature> = None;
     let mut first_squash_committer: Option<git2::Signature> = None;
+
+    // Get the tree from the newest squash commit upfront (this is the final state we want)
+    let newest_commit = repo.find_commit(newest_oid)
+        .map_err(|e| format!("Failed to find newest commit: {}", e))?;
+    let squash_tree = newest_commit.tree()
+        .map_err(|e| format!("Failed to get tree: {}", e))?;
 
     for oid in &all_commits {
         let old_commit = repo.find_commit(*oid)
             .map_err(|e| format!("Failed to find commit: {}", e))?;
 
         if squash_oids.contains(oid) {
-            // This commit is part of the squash - we'll use the tree from the newest one
-            squash_tree = Some(old_commit.tree()
-                .map_err(|e| format!("Failed to get tree: {}", e))?);
-
             // Keep the author/committer from the first (oldest) commit in squash
             if first_squash_author.is_none() {
                 first_squash_author = Some(old_commit.author().to_owned());
@@ -403,7 +428,7 @@ fn squash_commits_impl(
 
             // Check if this is the last commit to squash (newest)
             if *oid == newest_oid {
-                // Create the squashed commit
+                // Create the squashed commit using the newest commit's tree
                 let parent = repo.find_commit(current_parent_oid)
                     .map_err(|e| format!("Failed to find parent: {}", e))?;
 
@@ -412,7 +437,7 @@ fn squash_commits_impl(
                     first_squash_author.as_ref().unwrap(),
                     first_squash_committer.as_ref().unwrap(),
                     new_message,
-                    squash_tree.as_ref().unwrap(),
+                    &squash_tree,
                     &[&parent],
                 ).map_err(|e| format!("Failed to create squashed commit: {}", e))?;
 
@@ -453,12 +478,62 @@ fn squash_commits_impl(
     })
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RepoValidation {
+    pub valid: bool,
+    pub has_commits: bool,
+    pub error: Option<String>,
+}
+
 #[tauri::command]
-fn validate_repo(path: String) -> Result<bool, String> {
-    match Repository::open(&path) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
+fn validate_repo(path: String) -> Result<RepoValidation, String> {
+    // Try to open as a git repository
+    let repo = match Repository::open(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(RepoValidation {
+                valid: false,
+                has_commits: false,
+                error: Some(format!("Not a valid Git repository: {}", e)),
+            });
+        }
+    };
+
+    // Check if HEAD exists and is valid
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(e) => {
+            // Repository exists but HEAD is invalid (could be empty repo)
+            if e.code() == git2::ErrorCode::UnbornBranch {
+                return Ok(RepoValidation {
+                    valid: true,
+                    has_commits: false,
+                    error: Some("Repository has no commits yet".to_string()),
+                });
+            }
+            return Ok(RepoValidation {
+                valid: false,
+                has_commits: false,
+                error: Some(format!("Invalid HEAD reference: {}", e)),
+            });
+        }
+    };
+
+    // Check if HEAD points to a valid commit
+    let result = match head.peel_to_commit() {
+        Ok(_) => RepoValidation {
+            valid: true,
+            has_commits: true,
+            error: None,
+        },
+        Err(e) => RepoValidation {
+            valid: true,
+            has_commits: false,
+            error: Some(format!("HEAD does not point to a valid commit: {}", e)),
+        },
+    };
+
+    Ok(result)
 }
 
 #[tauri::command]
