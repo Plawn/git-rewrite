@@ -20,6 +20,12 @@ export interface RepoInfo {
   branch: string;
 }
 
+export interface RepoValidation {
+  valid: boolean;
+  has_commits: boolean;
+  error: string | null;
+}
+
 export interface BranchInfo {
   name: string;
   is_current: boolean;

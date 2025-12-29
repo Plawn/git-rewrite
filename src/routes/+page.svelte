@@ -5,7 +5,8 @@
   import Modal from '$lib/Modal.svelte';
   import DiffViewer from '$lib/DiffViewer.svelte';
   import ThemeToggle from '$lib/ThemeToggle.svelte';
-  import type { CommitInfo, RepoInfo, BranchInfo, CommitDiff } from '$lib/types';
+  import { createModalState, createAsyncModalState } from '$lib/modalState.svelte';
+  import type { CommitInfo, RepoInfo, BranchInfo, CommitDiff, RepoValidation } from '$lib/types';
 
   let repoPath = $state<string | null>(null);
   let repoInfo = $state<RepoInfo | null>(null);
@@ -14,19 +15,14 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
 
-  // Edit modal state
-  let editModalOpen = $state(false);
-  let editingCommit = $state<CommitInfo | null>(null);
+  // Modal states
+  const editModal = createModalState<CommitInfo>();
+  const squashModal = createModalState();
+  const diffModal = createAsyncModalState<CommitDiff>();
+
+  // Form state for modals
   let editMessage = $state('');
-
-  // Squash modal state
-  let squashModalOpen = $state(false);
   let squashMessage = $state('');
-
-  // Diff modal state
-  let diffModalOpen = $state(false);
-  let viewingDiff = $state<CommitDiff | null>(null);
-  let diffLoading = $state(false);
 
   // Auto-stash option
   let autoStash = $state(true);
@@ -50,9 +46,15 @@
     error = null;
 
     try {
-      const isValid = await invoke<boolean>('validate_repo', { path });
-      if (!isValid) {
-        error = 'Not a valid Git repository';
+      const validation = await invoke<RepoValidation>('validate_repo', { path });
+
+      if (!validation.valid) {
+        error = validation.error ?? 'Not a valid Git repository';
+        return;
+      }
+
+      if (!validation.has_commits) {
+        error = validation.error ?? 'Repository has no commits yet';
         return;
       }
 
@@ -92,19 +94,17 @@
   }
 
   function openEditModal(commit: CommitInfo) {
-    editingCommit = commit;
+    editModal.open(commit);
     editMessage = commit.message;
-    editModalOpen = true;
   }
 
   function closeEditModal() {
-    editModalOpen = false;
-    editingCommit = null;
+    editModal.close();
     editMessage = '';
   }
 
   async function saveEditMessage() {
-    if (!editingCommit || !repoPath) return;
+    if (!editModal.data || !repoPath) return;
 
     loading = true;
     error = null;
@@ -112,7 +112,7 @@
     try {
       await invoke('edit_commit_message', {
         repoPath,
-        commitHash: editingCommit.hash,
+        commitHash: editModal.data.hash,
         newMessage: editMessage,
         autoStash
       });
@@ -132,11 +132,11 @@
       return;
     }
     squashMessage = '';
-    squashModalOpen = true;
+    squashModal.open();
   }
 
   function closeSquashModal() {
-    squashModalOpen = false;
+    squashModal.close();
     squashMessage = '';
   }
 
@@ -170,26 +170,25 @@
   async function openDiffModal(commit: CommitInfo) {
     if (!repoPath) return;
 
-    diffModalOpen = true;
-    diffLoading = true;
-    viewingDiff = null;
+    diffModal.open();
+    diffModal.setLoading(true);
 
     try {
-      viewingDiff = await invoke<CommitDiff>('get_commit_diff', {
+      const data = await invoke<CommitDiff>('get_commit_diff', {
         repoPath,
         commitHash: commit.hash
       });
+      diffModal.setData(data);
     } catch (e) {
       error = String(e);
-      diffModalOpen = false;
+      diffModal.close();
     } finally {
-      diffLoading = false;
+      diffModal.setLoading(false);
     }
   }
 
   function closeDiffModal() {
-    diffModalOpen = false;
-    viewingDiff = null;
+    diffModal.close();
   }
 </script>
 
@@ -268,13 +267,13 @@
 </main>
 
 <!-- Edit Message Modal -->
-<Modal open={editModalOpen} title="Edit Commit Message" onClose={closeEditModal}>
+<Modal open={editModal.isOpen} title="Edit Commit Message" onClose={closeEditModal}>
   {#snippet children()}
-    {#if editingCommit}
+    {#if editModal.data}
       <div class="edit-form">
         <div class="commit-preview">
-          <span class="hash">{editingCommit.short_hash}</span>
-          <span class="author">{editingCommit.author}</span>
+          <span class="hash">{editModal.data.short_hash}</span>
+          <span class="author">{editModal.data.author}</span>
         </div>
         <textarea
           bind:value={editMessage}
@@ -297,7 +296,7 @@
 </Modal>
 
 <!-- Squash Modal -->
-<Modal open={squashModalOpen} title="Squash Commits" onClose={closeSquashModal}>
+<Modal open={squashModal.isOpen} title="Squash Commits" onClose={closeSquashModal}>
   {#snippet children()}
     <div class="squash-form">
       <p class="squash-info">
@@ -325,17 +324,28 @@
 </Modal>
 
 <!-- Diff Modal -->
-<svelte:window onkeydown={(e) => e.key === 'Escape' && diffModalOpen && closeDiffModal()} />
-{#if diffModalOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="diff-modal-backdrop" role="dialog" aria-modal="true" onclick={closeDiffModal}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="diff-modal" onclick={(e) => e.stopPropagation()}>
+<svelte:window onkeydown={(e) => e.key === 'Escape' && diffModal.isOpen && closeDiffModal()} />
+{#if diffModal.isOpen}
+  <div
+    class="diff-modal-backdrop"
+    role="presentation"
+    onclick={closeDiffModal}
+    onkeydown={(e) => e.key === 'Escape' && closeDiffModal()}
+  >
+    <div
+      class="diff-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="diff-modal-title"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
       <div class="diff-modal-header">
-        <div class="diff-modal-title">
-          {#if viewingDiff}
-            <span class="hash">{viewingDiff.hash.slice(0, 7)}</span>
-            <span class="message">{viewingDiff.message.split('\n')[0]}</span>
+        <div class="diff-modal-title" id="diff-modal-title">
+          {#if diffModal.data}
+            <span class="hash">{diffModal.data.hash.slice(0, 7)}</span>
+            <span class="message">{diffModal.data.message.split('\n')[0]}</span>
           {:else}
             Loading diff...
           {/if}
@@ -348,13 +358,13 @@
         </button>
       </div>
       <div class="diff-modal-body">
-        {#if diffLoading}
+        {#if diffModal.loading}
           <div class="diff-loading">
             <div class="spinner"></div>
             <span>Loading diff...</span>
           </div>
-        {:else if viewingDiff}
-          <DiffViewer diff={viewingDiff} />
+        {:else if diffModal.data}
+          <DiffViewer diff={diffModal.data} />
         {/if}
       </div>
     </div>

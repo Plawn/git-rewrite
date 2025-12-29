@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { CommitDiff, FileDiff } from './types';
+  import SearchBar from './SearchBar.svelte';
+  import { TIMING } from './constants';
 
   interface Props {
     diff: CommitDiff;
@@ -76,11 +78,21 @@
     }
   }
 
+  function escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   function highlightText(text: string, query: string): string {
-    if (!query.trim()) return text;
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escaped})`, 'gi');
-    return text.replace(regex, '<mark class="search-highlight">$1</mark>');
+    const escaped = escapeHtml(text);
+    if (!query.trim()) return escaped;
+    const queryEscaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapeHtml(queryEscaped)})`, 'gi');
+    return escaped.replace(regex, '<mark class="search-highlight">$1</mark>');
   }
 
   function clearSearch() {
@@ -117,7 +129,7 @@
         if (target) {
           target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-      }, 50);
+      }, TIMING.SCROLL_TO_MATCH_DELAY_MS);
     }
   }
 
@@ -151,45 +163,38 @@
       <span class="stat deletions">-{diff.stats.deletions}</span>
     </div>
 
-    <div class="search-bar">
-      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.35-4.35"/>
-      </svg>
-      <input
-        type="text"
-        class="search-input"
+    <div class="search-wrapper">
+      <SearchBar
+        value={searchQuery}
         placeholder="Search in diff..."
-        bind:value={searchQuery}
-        onkeydown={handleKeydown}
-      />
-      {#if searchQuery}
-        <span class="match-count" class:no-matches={matchCount === 0}>
-          {#if matchCount > 0}
-            {currentMatchIndex + 1}/{matchCount} in {filteredFiles.length} file{filteredFiles.length !== 1 ? 's' : ''}
-          {:else}
-            No matches
+        onInput={(v) => searchQuery = v}
+        onClear={clearSearch}
+        onKeydown={handleKeydown}
+      >
+        {#snippet extraContent()}
+          {#if searchQuery}
+            <span class="match-count" class:no-matches={matchCount === 0}>
+              {#if matchCount > 0}
+                {currentMatchIndex + 1}/{matchCount} in {filteredFiles.length} file{filteredFiles.length !== 1 ? 's' : ''}
+              {:else}
+                No matches
+              {/if}
+            </span>
+            <div class="search-nav">
+              <button class="nav-btn" onclick={goToPrevMatch} disabled={matchCount === 0} title="Previous match (Shift+Enter)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="18 15 12 9 6 15"></polyline>
+                </svg>
+              </button>
+              <button class="nav-btn" onclick={goToNextMatch} disabled={matchCount === 0} title="Next match (Enter)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+            </div>
           {/if}
-        </span>
-        <div class="search-nav">
-          <button class="nav-btn" onclick={goToPrevMatch} disabled={matchCount === 0} title="Previous match (Shift+Enter)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </button>
-          <button class="nav-btn" onclick={goToNextMatch} disabled={matchCount === 0} title="Next match (Enter)">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-        </div>
-        <button class="clear-btn" onclick={clearSearch} title="Clear search">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      {/if}
+        {/snippet}
+      </SearchBar>
     </div>
   </div>
 
@@ -290,57 +295,10 @@
     border: 1px solid rgba(0, 0, 0, 0.08);
   }
 
-  /* Search bar styles */
-  .search-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: var(--radius-md);
+  /* Search wrapper */
+  .search-wrapper {
     flex: 1;
     max-width: 350px;
-    transition: all var(--transition-fast);
-  }
-
-  :global([data-theme="light"]) .search-bar {
-    background: rgba(0, 0, 0, 0.03);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-  }
-
-  .search-bar:focus-within {
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 2px var(--accent-muted);
-  }
-
-  .search-icon {
-    color: var(--muted-color);
-    flex-shrink: 0;
-  }
-
-  .search-bar:focus-within .search-icon {
-    color: var(--accent-color);
-  }
-
-  .search-input {
-    flex: 1;
-    border: none !important;
-    background: transparent !important;
-    padding: 4px 0 !important;
-    font-size: 13px;
-    color: var(--text-color);
-    min-width: 100px;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-  }
-
-  .search-input:focus {
-    outline: none;
-  }
-
-  .search-input::placeholder {
-    color: var(--muted-color);
   }
 
   .match-count {
@@ -370,7 +328,7 @@
     gap: 2px;
   }
 
-  .nav-btn, .clear-btn {
+  .nav-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -383,13 +341,12 @@
     transition: all var(--transition-fast);
   }
 
-  .nav-btn:hover:not(:disabled), .clear-btn:hover {
+  .nav-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.1);
     color: var(--text-color);
   }
 
-  :global([data-theme="light"]) .nav-btn:hover:not(:disabled),
-  :global([data-theme="light"]) .clear-btn:hover {
+  :global([data-theme="light"]) .nav-btn:hover:not(:disabled) {
     background: rgba(0, 0, 0, 0.08);
   }
 
@@ -681,7 +638,7 @@
       align-items: stretch;
     }
 
-    .search-bar {
+    .search-wrapper {
       max-width: none;
     }
 
@@ -727,13 +684,8 @@
       gap: 8px;
     }
 
-    .search-bar {
-      padding: 4px 10px;
-      gap: 6px;
-    }
-
-    .search-input {
-      font-size: 16px !important; /* Prevents zoom on iOS */
+    .search-wrapper {
+      max-width: none;
     }
 
     .match-count {

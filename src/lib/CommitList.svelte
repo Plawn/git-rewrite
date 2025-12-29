@@ -2,7 +2,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import CommitItem from './CommitItem.svelte';
   import GitGraphLine from './GitGraphLine.svelte';
+  import SearchBar from './SearchBar.svelte';
   import { calculateGraphLayout } from './graphUtils';
+  import { PAGINATION, UI, TIMING } from './constants';
   import type { CommitInfo, CommitPage } from './types';
 
   interface Props {
@@ -24,34 +26,19 @@
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
   let currentRepoPath = $state('');
 
-  const PAGE_SIZE = 50;
-  const ROW_HEIGHT = 52;
-
   // Calculate graph layout whenever commits change
   let graphLayout = $derived(calculateGraphLayout(commits));
 
   async function loadCommits(reset = false, query = '') {
-    console.log('[loadCommits]', { reset, query, loading, hasMore, currentRepoPath, commitsLen: commits.length });
-
-    if (loading) {
-      console.log('[loadCommits] already loading, skip');
-      return;
-    }
-    if (!reset && !hasMore) {
-      console.log('[loadCommits] no more to load');
-      return;
-    }
-    if (!currentRepoPath) {
-      console.log('[loadCommits] no repo path');
-      return;
-    }
+    if (loading) return;
+    if (!reset && !hasMore) return;
+    if (!currentRepoPath) return;
 
     loading = true;
     error = null;
 
     try {
       const offset = reset ? 0 : commits.length;
-      console.log('[loadCommits] fetching', { offset, limit: PAGE_SIZE, query: query.trim() || '(none)' });
 
       let result: CommitPage;
       if (query.trim()) {
@@ -59,17 +46,15 @@
           repoPath: currentRepoPath,
           query: query.trim(),
           offset,
-          limit: PAGE_SIZE
+          limit: PAGINATION.PAGE_SIZE
         });
       } else {
         result = await invoke('get_commits', {
           repoPath: currentRepoPath,
           offset,
-          limit: PAGE_SIZE
+          limit: PAGINATION.PAGE_SIZE
         });
       }
-
-      console.log('[loadCommits] result', { count: result.commits.length, hasMore: result.has_more, total: result.total_count });
 
       if (reset) {
         commits = result.commits;
@@ -80,26 +65,21 @@
       totalCount = result.total_count;
     } catch (e) {
       error = String(e);
-      console.error('[loadCommits] error:', e);
     } finally {
       loading = false;
     }
   }
 
-  function handleSearchInput(e: Event) {
-    const target = e.target as HTMLInputElement;
-    const newValue = target.value;
-    console.log('[handleSearchInput]', newValue);
-    searchQuery = newValue;
+  function handleSearchInput(value: string) {
+    searchQuery = value;
 
     // Debounce search
     if (searchTimeout) {
       clearTimeout(searchTimeout);
     }
     searchTimeout = setTimeout(() => {
-      console.log('[handleSearchInput] debounce trigger', newValue);
-      loadCommits(true, newValue);
-    }, 300);
+      loadCommits(true, value);
+    }, TIMING.SEARCH_DEBOUNCE_MS);
   }
 
   function clearSearch() {
@@ -115,9 +95,8 @@
     const { scrollTop, scrollHeight, clientHeight } = target;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
 
-    // Load more when 200px from bottom
-    if (distanceFromBottom < 200 && !loading && hasMore) {
-      console.log('[handleScroll] near bottom, loading more', { distanceFromBottom, loading, hasMore });
+    // Load more when near bottom
+    if (distanceFromBottom < PAGINATION.SCROLL_THRESHOLD && !loading && hasMore) {
       loadCommits(false, searchQuery);
     }
   }
@@ -143,9 +122,7 @@
 
   // Reload when repoPath changes
   $effect(() => {
-    console.log('[effect] repoPath changed?', { repoPath, currentRepoPath });
     if (repoPath && repoPath !== currentRepoPath) {
-      console.log('[effect] loading commits for new repo');
       currentRepoPath = repoPath;
       searchQuery = '';
       hasMore = true;
@@ -161,26 +138,13 @@
 
 <div class="commit-list-container">
   <div class="list-header">
-    <div class="search-bar">
-      <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.35-4.35"/>
-      </svg>
-      <input
-        type="text"
-        class="search-input"
-        placeholder="Search commits..."
+    <div class="search-wrapper">
+      <SearchBar
         value={searchQuery}
-        oninput={handleSearchInput}
+        placeholder="Search commits..."
+        onInput={handleSearchInput}
+        onClear={clearSearch}
       />
-      {#if searchQuery}
-        <button class="clear-search-btn" onclick={clearSearch} title="Clear search">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      {/if}
     </div>
     <div class="header-right">
       <span class="count">{totalCount} {searchQuery ? 'matches' : 'commits'}</span>
@@ -210,7 +174,7 @@
           <GitGraphLine
             node={graphNode}
             maxRails={graphLayout.maxRails}
-            rowHeight={ROW_HEIGHT}
+            rowHeight={UI.ROW_HEIGHT}
             isSelected={selectedCommits.has(commit.hash)}
           />
         {/if}
@@ -272,80 +236,9 @@
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   }
 
-  .search-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .search-wrapper {
     flex: 1;
     max-width: 400px;
-    background: rgba(0, 0, 0, 0.25);
-    backdrop-filter: blur(var(--blur-sm));
-    -webkit-backdrop-filter: blur(var(--blur-sm));
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-lg);
-    padding: 0 14px;
-    transition: all var(--transition-normal);
-  }
-
-  .search-bar:focus-within {
-    border-color: var(--accent-color);
-    box-shadow:
-      0 0 0 3px var(--accent-muted),
-      0 0 20px var(--accent-glow);
-    background: rgba(0, 0, 0, 0.35);
-  }
-
-  .search-icon {
-    color: var(--muted-color);
-    flex-shrink: 0;
-    transition: color var(--transition-fast);
-  }
-
-  .search-bar:focus-within .search-icon {
-    color: var(--accent-color);
-  }
-
-  .search-input {
-    flex: 1;
-    border: none !important;
-    background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    padding: 10px 0 !important;
-    font-size: 14px;
-    color: var(--text-color);
-    width: 100%;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-  }
-
-  .search-input:focus {
-    outline: none;
-    box-shadow: none !important;
-    border: none !important;
-  }
-
-  .search-input::placeholder {
-    color: var(--muted-color);
-  }
-
-  .clear-search-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    color: var(--muted-color);
-    transition: all var(--transition-fast);
-  }
-
-  .clear-search-btn:hover {
-    background: var(--glass-bg-hover);
-    color: var(--text-color);
-    border-color: var(--glass-border-light);
   }
 
   .header-right {
@@ -473,7 +366,7 @@
       border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     }
 
-    .search-bar {
+    .search-wrapper {
       max-width: none;
     }
 
@@ -498,14 +391,8 @@
       border-radius: var(--radius-md) var(--radius-md) 0 0;
     }
 
-    .search-bar {
-      padding: 0 10px;
-      border-radius: var(--radius-md);
-    }
-
-    .search-input {
-      font-size: 16px; /* Prevents zoom on iOS */
-      padding: 8px 0;
+    .search-wrapper {
+      max-width: none;
     }
 
     .header-right {

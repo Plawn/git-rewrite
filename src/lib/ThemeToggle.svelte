@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { STORAGE_KEYS } from './constants';
 
   let theme = $state<'dark' | 'light'>('dark');
   let mounted = $state(false);
 
   onMount(() => {
     // Check localStorage first, then system preference
-    const saved = localStorage.getItem('theme');
+    const saved = localStorage.getItem(STORAGE_KEYS.THEME);
     if (saved === 'light' || saved === 'dark') {
       theme = saved;
     } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
@@ -18,7 +19,7 @@
 
   function applyTheme(newTheme: 'dark' | 'light') {
     document.documentElement.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
+    localStorage.setItem(STORAGE_KEYS.THEME, newTheme);
   }
 
   function toggleTheme() {

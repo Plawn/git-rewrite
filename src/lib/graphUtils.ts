@@ -1,4 +1,5 @@
 import type { CommitInfo } from './types';
+import { GRAPH } from './constants';
 
 export interface GraphConnection {
   fromRail: number;
@@ -22,6 +23,8 @@ export interface GraphLayout {
 /**
  * Calculate git graph layout from commits.
  * Commits should be sorted from newest to oldest (HEAD first).
+ *
+ * Optimized with O(1) lookups using Maps instead of array searches.
  */
 export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
   if (commits.length === 0) {
@@ -32,21 +35,63 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
 
   // Track active rails: each entry is [expectedCommitHash, colorIndex] or null
   const activeRails: (readonly [string, number] | null)[] = [];
+
+  // O(1) lookup: which rails are expecting a given commit hash
+  const hashToRails = new Map<string, number[]>();
+
+  // O(1) lookup: track empty rail indices for reuse
+  const emptyRails: number[] = [];
+
+  // Track active rail count to avoid filtering
+  let activeRailCount = 0;
   let maxRails = 0;
   let colorCounter = 0;
 
   // Build a set of commits we have for quick lookup
   const commitSet = new Set(commits.map(c => c.hash));
 
-  for (const commit of commits) {
-    // Find rails that are expecting this commit
-    const railsExpectingMe: number[] = [];
-    for (let i = 0; i < activeRails.length; i++) {
-      const rail = activeRails[i];
-      if (rail && rail[0] === commit.hash) {
-        railsExpectingMe.push(i);
-      }
+  // Helper: register a rail as expecting a commit hash
+  function setRailExpecting(railIdx: number, hash: string, color: number) {
+    activeRails[railIdx] = [hash, color] as const;
+    const existing = hashToRails.get(hash);
+    if (existing) {
+      existing.push(railIdx);
+    } else {
+      hashToRails.set(hash, [railIdx]);
     }
+  }
+
+  // Helper: clear a rail
+  function clearRail(railIdx: number) {
+    const rail = activeRails[railIdx];
+    if (rail) {
+      const hash = rail[0];
+      const rails = hashToRails.get(hash);
+      if (rails) {
+        const idx = rails.indexOf(railIdx);
+        if (idx !== -1) rails.splice(idx, 1);
+        if (rails.length === 0) hashToRails.delete(hash);
+      }
+      activeRails[railIdx] = null;
+      emptyRails.push(railIdx);
+      activeRailCount--;
+    }
+  }
+
+  // Helper: allocate a rail (reuse empty or create new)
+  function allocateRail(): number {
+    activeRailCount++;
+    if (emptyRails.length > 0) {
+      return emptyRails.pop()!;
+    }
+    const newIdx = activeRails.length;
+    activeRails.push(null);
+    return newIdx;
+  }
+
+  for (const commit of commits) {
+    // O(1) lookup: find rails expecting this commit
+    const railsExpectingMe = hashToRails.get(commit.hash) ?? [];
 
     // Determine which rail this commit should be on
     let myRail: number;
@@ -57,21 +102,17 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
       myRail = railsExpectingMe[0];
       myColor = activeRails[myRail]![1];
     } else {
-      // Find an empty rail or create a new one
-      const emptyRail = activeRails.findIndex(r => r === null);
-      myColor = colorCounter++ % 8;
-      if (emptyRail !== -1) {
-        myRail = emptyRail;
-      } else {
-        myRail = activeRails.length;
-        activeRails.push(null);
-      }
+      // Allocate a new rail
+      myRail = allocateRail();
+      myColor = colorCounter++ % GRAPH.COLOR_COUNT;
     }
 
     const connections: GraphConnection[] = [];
 
-    // Clear all rails that were expecting this commit
-    for (const railIdx of railsExpectingMe) {
+    // Clear all rails that were expecting this commit (and draw merge lines)
+    // Copy the array since we'll modify hashToRails during iteration
+    const railsToClear = [...railsExpectingMe];
+    for (const railIdx of railsToClear) {
       if (railIdx !== myRail) {
         // Draw a merge line from that rail to our rail
         connections.push({
@@ -81,19 +122,34 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
           colorIndex: activeRails[railIdx]![1],
         });
       }
-      activeRails[railIdx] = null;
+      clearRail(railIdx);
     }
 
     // Set up rails for parents
     const parentCount = commit.parent_ids.length;
 
     if (parentCount === 0) {
-      // Initial commit - rail ends here
-      activeRails[myRail] = null;
+      // Initial commit - rail ends here, already cleared above or not allocated
+      if (railsExpectingMe.length === 0) {
+        // We allocated a rail but don't need it
+        activeRailCount--;
+        emptyRails.push(myRail);
+      }
     } else if (parentCount === 1) {
       // Single parent - continue on same rail
       const parentHash = commit.parent_ids[0];
-      activeRails[myRail] = [parentHash, myColor] as const;
+
+      if (railsExpectingMe.length === 0) {
+        // New rail was allocated, count is already incremented
+      } else {
+        // Reusing existing rail, need to increment since we cleared it
+        activeRailCount++;
+        // Remove from empty rails if it was added
+        const emptyIdx = emptyRails.indexOf(myRail);
+        if (emptyIdx !== -1) emptyRails.splice(emptyIdx, 1);
+      }
+
+      setRailExpecting(myRail, parentHash, myColor);
 
       // Draw straight line down if parent is in our commits
       if (commitSet.has(parentHash)) {
@@ -111,7 +167,16 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
 
         if (i === 0) {
           // First parent continues on our rail
-          activeRails[myRail] = [parentHash, myColor] as const;
+          if (railsExpectingMe.length === 0) {
+            // New rail was allocated
+          } else {
+            activeRailCount++;
+            const emptyIdx = emptyRails.indexOf(myRail);
+            if (emptyIdx !== -1) emptyRails.splice(emptyIdx, 1);
+          }
+
+          setRailExpecting(myRail, parentHash, myColor);
+
           if (commitSet.has(parentHash)) {
             connections.push({
               fromRail: myRail,
@@ -121,13 +186,12 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
             });
           }
         } else {
-          // Other parents: check if already expected on a rail
-          const existingRail = activeRails.findIndex(
-            r => r !== null && r[0] === parentHash
-          );
+          // Other parents: check if already expected on a rail (O(1) lookup)
+          const existingRails = hashToRails.get(parentHash);
 
-          if (existingRail !== -1) {
+          if (existingRails && existingRails.length > 0) {
             // Parent already on a rail, draw branch line to it
+            const existingRail = existingRails[0];
             connections.push({
               fromRail: myRail,
               toRail: existingRail,
@@ -135,18 +199,10 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
               colorIndex: activeRails[existingRail]![1],
             });
           } else {
-            // Find or create a new rail for this parent
-            const emptyRail = activeRails.findIndex(r => r === null);
-            const newColor = colorCounter++ % 8;
-            let parentRail: number;
-
-            if (emptyRail !== -1) {
-              parentRail = emptyRail;
-              activeRails[emptyRail] = [parentHash, newColor] as const;
-            } else {
-              parentRail = activeRails.length;
-              activeRails.push([parentHash, newColor] as const);
-            }
+            // Allocate a new rail for this parent
+            const parentRail = allocateRail();
+            const newColor = colorCounter++ % GRAPH.COLOR_COUNT;
+            setRailExpecting(parentRail, parentHash, newColor);
 
             connections.push({
               fromRail: myRail,
@@ -159,9 +215,8 @@ export function calculateGraphLayout(commits: CommitInfo[]): GraphLayout {
       }
     }
 
-    // Track max rails
-    const activeCount = activeRails.filter(r => r !== null).length;
-    maxRails = Math.max(maxRails, activeCount, myRail + 1);
+    // Track max rails (O(1) instead of filtering)
+    maxRails = Math.max(maxRails, activeRailCount, myRail + 1);
 
     // Calculate pass-through rails (rails not involved in this commit's connections)
     const involvedRails = new Set<number>([myRail]);
