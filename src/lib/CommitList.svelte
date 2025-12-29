@@ -206,7 +206,7 @@
     {#each commits as commit (commit.hash)}
       {@const graphNode = graphLayout.nodes.get(commit.hash)}
       <div class="commit-row">
-        {#if graphNode}
+        {#if graphNode && !searchQuery}
           <GitGraphLine
             node={graphNode}
             maxRails={graphLayout.maxRails}
